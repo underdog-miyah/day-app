@@ -1,8 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+
+  // 次の API では name だけ必ず書き換える。
   "name": "jp-holiday-api",
+
   "main": "src/index.ts",
-  "compatibility_date": "2025-01-01",
+
+  // ルール: プロジェクト作成日を入れる。以後、必要が生じるまで変更しない。
+  // 古い日付のまま放置すると、Workers ランタイムの古い挙動で動き続ける。
+  "compatibility_date": "2026-08-17",
+
+  // wrangler tail / ダッシュボードでログを見るために有効化しておく。
   "observability": {
     "enabled": true
   }

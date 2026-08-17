@@ -1,57 +1,51 @@
 import { Hono } from "hono";
-import { evaluate, parseDate } from "./businessDay";
+import { cors } from "hono/cors";
+import { errorBody } from "./appErrors";
+import { evaluate } from "./businessDay";
 import { SUPPORTED_YEARS, getHolidays, isSupportedYear } from "./holidays";
-
-type ErrorCode = "INVALID_PARAMETER" | "YEAR_NOT_SUPPORTED" | "NOT_FOUND";
+import { getYear } from "./lib/date";
+import { notFoundHandler, onErrorHandler } from "./lib/errors";
+import { queryValidator } from "./lib/validation";
+import { holidaysQuery, isBusinessDayQuery } from "./schema";
 
 const SUPPORTED_RANGE = `${SUPPORTED_YEARS[0]}-${SUPPORTED_YEARS[SUPPORTED_YEARS.length - 1]}`;
-
-const errorBody = (code: ErrorCode, message: string) => ({ error: { code, message } });
+const yearNotSupported = () =>
+  errorBody("YEAR_NOT_SUPPORTED", `holiday data is available for ${SUPPORTED_RANGE} only`);
 
 const app = new Hono();
 
-app.get("/v1/holidays", (c) => {
-  const year = c.req.query("year");
-  if (year === undefined) {
-    return c.json(errorBody("INVALID_PARAMETER", "year is required"), 400);
-  }
-  if (!/^\d{4}$/.test(year)) {
-    return c.json(errorBody("INVALID_PARAMETER", "year must be a 4-digit integer"), 400);
-  }
+// ── ミドルウェア挿入点 ──────────────────────────────
+// 認証・レート制限を足すときはここに app.use("/v1/*", ...) を挟む。
+// 各ルートハンドラを書き換える必要はない。
+// ───────────────────────────────────────────────
 
-  const y = Number(year);
-  const holidays = getHolidays(y);
+// 認証なしの公開 read-only API なので origin は既定の "*"。
+// "/v1/*" ではなく "*" にするのは、404 / 500 のレスポンスにも CORS ヘッダを付けるため。
+// 付いていないと、ブラウザからはエラーの中身が読めずネットワークエラーにしか見えない。
+app.use("*", cors());
+
+app.get("/v1/holidays", queryValidator(holidaysQuery), (c) => {
+  const year = Number(c.req.valid("query").year);
+
+  const holidays = getHolidays(year);
   if (holidays === undefined) {
-    return c.json(
-      errorBody("YEAR_NOT_SUPPORTED", `holiday data is available for ${SUPPORTED_RANGE} only`),
-      404,
-    );
+    return c.json(yearNotSupported(), 404);
   }
 
-  return c.json({ year: y, count: holidays.length, holidays });
+  return c.json({ year, count: holidays.length, holidays });
 });
 
-app.get("/v1/is-business-day", (c) => {
-  const date = c.req.query("date");
-  if (date === undefined) {
-    return c.json(errorBody("INVALID_PARAMETER", "date is required"), 400);
+app.get("/v1/is-business-day", queryValidator(isBusinessDayQuery), (c) => {
+  const { date } = c.req.valid("query");
+
+  if (!isSupportedYear(getYear(date))) {
+    return c.json(yearNotSupported(), 404);
   }
 
-  const parsed = parseDate(date);
-  if (parsed === undefined) {
-    return c.json(errorBody("INVALID_PARAMETER", "date must be a valid YYYY-MM-DD date"), 400);
-  }
-
-  if (!isSupportedYear(parsed.getUTCFullYear())) {
-    return c.json(
-      errorBody("YEAR_NOT_SUPPORTED", `holiday data is available for ${SUPPORTED_RANGE} only`),
-      404,
-    );
-  }
-
-  return c.json(evaluate(date, parsed));
+  return c.json(evaluate(date));
 });
 
-app.notFound((c) => c.json(errorBody("NOT_FOUND", "no such endpoint"), 404));
+app.notFound(notFoundHandler);
+app.onError(onErrorHandler);
 
 export default app;
